@@ -88,13 +88,13 @@ function readExpr(type: Type, optional?: boolean): string {
   if (isArrayType(type)) {
     const elem = arrayElementType(type);
     const elemGo = typeToGo(elem);
-    const elemRead = isModelType(elem) ? `*${readExpr(elem)}` : readExpr(elem);
+    const elemRead = readExpr(elem);
     return `func() []${elemGo} { var _a []${elemGo}; r.BeginArray(); for r.HasNextElement() { _a = append(_a, ${elemRead}) }; r.EndArray(); return _a }()`;
   }
   if (isRecordType(type)) {
     const elem = recordElementType(type);
     const elemGo = typeToGo(elem);
-    const elemRead = isModelType(elem) ? `*${readExpr(elem)}` : readExpr(elem);
+    const elemRead = readExpr(elem);
     return `func() map[string]${elemGo} { _m := map[string]${elemGo}{}; r.BeginObject(); for r.HasNextField() { _k := r.ReadFieldName(); _m[_k] = ${elemRead} }; r.EndObject(); return _m }()`;
   }
   if (type.kind === "Model" && (type as Model).name) {
@@ -119,8 +119,10 @@ function emitModelFunctions(m: Model, L: string[]): void {
     L.push(`	w.BeginObject(_n)`);
   }
   for (const f of fields) {
-    if (f.optional) {
-      L.push(`	if obj.${f.name} != nil { w.WriteField("${f.name}"); ${writeExpr(f.type, `*obj.${f.name}`)}; }`);
+      if (f.optional) {
+        const goType = typeToGo(f.type);
+        const deref = goType.startsWith("*") ? `obj.${f.name}` : `*obj.${f.name}`;
+        L.push(`	if obj.${f.name} != nil { w.WriteField("${f.name}"); ${writeExpr(f.type, deref)}; }`);
     } else {
       L.push(`	w.WriteField("${f.name}"); ${writeExpr(f.type, `obj.${f.name}`)};`);
     }
@@ -137,7 +139,12 @@ function emitModelFunctions(m: Model, L: string[]): void {
   for (const f of fields) {
     const fieldRead = readExpr(f.type, f.optional);
     if (f.optional) {
-      L.push(`		case "${f.name}": _v := ${fieldRead}; obj.${f.name} = &_v`);
+      const goType = typeToGo(f.type);
+      if (goType.startsWith("*")) {
+        L.push(`		case "${f.name}": obj.${f.name} = ${fieldRead}`);
+      } else {
+        L.push(`		case "${f.name}": _v := ${fieldRead}; obj.${f.name} = &_v`);
+      }
     } else {
       L.push(`		case "${f.name}": obj.${f.name} = ${fieldRead}`);
     }
@@ -175,7 +182,9 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
       const fields = extractFields(m);
       L.push(`type ${m.name} struct {`);
       for (const f of fields) {
-        L.push(`	${f.name} ${typeToGo(f.type)}`);
+        const goType = typeToGo(f.type);
+        const needsPtr = f.optional && !goType.startsWith("*");
+        L.push(`	${f.name} ${needsPtr ? "*" : ""}${goType}`);
       }
       L.push(`}`);
       L.push("");
