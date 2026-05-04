@@ -110,7 +110,7 @@ function emitModelFunctions(m: Model, L: string[]): void {
   const required = fields.filter(f => !f.optional);
   const optional = fields.filter(f => f.optional);
 
-  L.push(`func write${m.name}(w *specodec.SpecWriter, obj ${m.name}) {`);
+  L.push(`func write${m.name}(w *specodec.SpecWriter, obj *${m.name}) {`);
   if (optional.length === 0) {
     L.push(`	w.BeginObject(${fields.length})`);
   } else {
