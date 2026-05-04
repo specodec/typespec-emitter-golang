@@ -1,6 +1,6 @@
 {
-  "name": "@specodec/typespec-emitter-go",
-  "version": "0.1.0",
+  "name": "@specodec/typespec-emitter-golang",
+  "version": "0.1.1",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
