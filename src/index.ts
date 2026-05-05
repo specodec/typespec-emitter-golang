@@ -17,6 +17,7 @@ import {
   arrayElementType,
   recordElementType,
   toSnakeCase,
+  toPascalCase,
   checkAndReportReservedKeywords,
 } from "@specodec/typespec-emitter-core";
 
@@ -60,11 +61,11 @@ function writeExpr(type: Type, varExpr: string): string {
   if (n === "bytes") return `w.WriteBytes(${varExpr})`;
   if (isArrayType(type)) {
     const elem = arrayElementType(type);
-    return `func() { w.BeginArray(len(${varExpr})); for _, _e := range ${varExpr} { w.NextElement(); ${writeExpr(elem, "_e")}; }; w.EndArray() }()`;
+    return `func() { w.BeginArray(len(${varExpr})); for _, item := range ${varExpr} { w.NextElement(); ${writeExpr(elem, "item")}; }; w.EndArray() }()`;
   }
   if (isRecordType(type)) {
     const elem = recordElementType(type);
-    return `func() { w.BeginObject(len(${varExpr})); for _k, _v := range ${varExpr} { w.WriteField(_k); ${writeExpr(elem, "_v")}; }; w.EndObject() }()`;
+    return `func() { w.BeginObject(len(${varExpr})); for key, val := range ${varExpr} { w.WriteField(key); ${writeExpr(elem, "val")}; }; w.EndObject() }()`;
   }
   if (type.kind === "Model" && (type as Model).name) return `write${(type as Model).name}(w, ${varExpr})`;
   return `w.WriteString(fmt.Sprintf("%v", ${varExpr}))`;
@@ -89,13 +90,13 @@ function readExpr(type: Type, optional?: boolean): string {
     const elem = arrayElementType(type);
     const elemGo = typeToGo(elem);
     const elemRead = readExpr(elem);
-    return `func() []${elemGo} { var _a []${elemGo}; r.BeginArray(); for r.HasNextElement() { _a = append(_a, ${elemRead}) }; r.EndArray(); return _a }()`;
+    return `func() []${elemGo} { var arr []${elemGo}; r.BeginArray(); for r.HasNextElement() { arr = append(arr, ${elemRead}) }; r.EndArray(); return arr }()`;
   }
   if (isRecordType(type)) {
     const elem = recordElementType(type);
     const elemGo = typeToGo(elem);
     const elemRead = readExpr(elem);
-    return `func() map[string]${elemGo} { _m := map[string]${elemGo}{}; r.BeginObject(); for r.HasNextField() { _k := r.ReadFieldName(); _m[_k] = ${elemRead} }; r.EndObject(); return _m }()`;
+    return `func() map[string]${elemGo} { mapResult := map[string]${elemGo}{}; r.BeginObject(); for r.HasNextField() { key := r.ReadFieldName(); mapResult[key] = ${elemRead} }; r.EndObject(); return mapResult }()`;
   }
   if (type.kind === "Model" && (type as Model).name) {
     if (optional) return `func() *${(type as Model).name} { if r.IsNull() { r.ReadNull(); return nil }; return decode${(type as Model).name}(r) }()`;
@@ -114,17 +115,18 @@ function emitModelFunctions(m: Model, L: string[]): void {
   if (optional.length === 0) {
     L.push(`	w.BeginObject(${fields.length})`);
   } else {
-    L.push(`	_n := ${required.length}`);
-    for (const f of optional) L.push(`	if obj.${f.name} != nil { _n++ }`);
-    L.push(`	w.BeginObject(_n)`);
+    L.push(`	fieldCount := ${required.length}`);
+    for (const f of optional) { const fGo = toPascalCase(f.name); L.push(`	if obj.${fGo} != nil { fieldCount++ }`); }
+    L.push(`	w.BeginObject(fieldCount)`);
   }
   for (const f of fields) {
+      const fGo = toPascalCase(f.name);
       if (f.optional) {
         const goType = typeToGo(f.type);
-        const deref = goType.startsWith("*") ? `obj.${f.name}` : `*obj.${f.name}`;
-        L.push(`	if obj.${f.name} != nil { w.WriteField("${f.name}"); ${writeExpr(f.type, deref)}; }`);
+        const deref = goType.startsWith("*") ? `obj.${fGo}` : `*obj.${fGo}`;
+        L.push(`	if obj.${fGo} != nil { w.WriteField("${f.name}"); ${writeExpr(f.type, deref)}; }`);
     } else {
-      L.push(`	w.WriteField("${f.name}"); ${writeExpr(f.type, `obj.${f.name}`)};`);
+      L.push(`	w.WriteField("${f.name}"); ${writeExpr(f.type, `obj.${fGo}`)};`);
     }
   }
   L.push(`	w.EndObject()`);
@@ -137,16 +139,17 @@ function emitModelFunctions(m: Model, L: string[]): void {
   L.push(`	for r.HasNextField() {`);
   L.push(`		switch r.ReadFieldName() {`);
   for (const f of fields) {
+    const fGo = toPascalCase(f.name);
     const fieldRead = readExpr(f.type, f.optional);
     if (f.optional) {
       const goType = typeToGo(f.type);
       if (goType.startsWith("*")) {
-        L.push(`		case "${f.name}": obj.${f.name} = ${fieldRead}`);
+        L.push(`		case "${f.name}": obj.${fGo} = ${fieldRead}`);
       } else {
-        L.push(`		case "${f.name}": _v := ${fieldRead}; obj.${f.name} = &_v`);
+        L.push(`		case "${f.name}": val := ${fieldRead}; obj.${fGo} = &val`);
       }
     } else {
-      L.push(`		case "${f.name}": obj.${f.name} = ${fieldRead}`);
+      L.push(`		case "${f.name}": obj.${fGo} = ${fieldRead}`);
     }
   }
   L.push(`		default: r.Skip()`);
@@ -182,9 +185,10 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
       const fields = extractFields(m);
       L.push(`type ${m.name} struct {`);
       for (const f of fields) {
+        const fGo = toPascalCase(f.name);
         const goType = typeToGo(f.type);
         const needsPtr = f.optional && !goType.startsWith("*");
-        L.push(`	${f.name} ${needsPtr ? "*" : ""}${goType}`);
+        L.push(`	${fGo} ${needsPtr ? "*" : ""}${goType}`);
       }
       L.push(`}`);
       L.push("");
