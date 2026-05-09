@@ -1,6 +1,6 @@
 {
   "name": "@specodec/typespec-emitter-golang",
-  "version": "0.1.8",
+  "version": "0.1.28",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,7 +19,7 @@
     "prepare": "npm run build"
   },
   "dependencies": {
-    "@specodec/typespec-emitter-core": "^0.1.1"
+    "@specodec/typespec-emitter-core": "^0.1.9"
   },
   "devDependencies": {
     "@typespec/compiler": "1.11.0",
@@ -29,5 +29,8 @@
     "dist/**",
     "src/**",
     "lib/**"
-  ]
+  ],
+  "publishConfig": {
+    "registry": "http://10.199.64.20:3000/api/packages/specodec/npm/"
+  }
 }
