@@ -40,8 +40,8 @@ function typeToGo(type: Type): string {
   if (n === "float32") return "float32";
   if (n === "float64" || n === "float" || n === "decimal") return "float64";
   if (n === "bytes") return "[]byte";
-  if (isArrayType(type)) return `[]${typeToGo(arrayElementType(type))}`;
-  if (isRecordType(type)) return `map[string]${typeToGo(recordElementType(type))}`;
+  if (isArrayType(type)) return `[]${typeToGo(arrayElementType(type)!)}`;
+  if (isRecordType(type)) return `map[string]${typeToGo(recordElementType(type)!)}`;
   if (type.kind === "Enum") return "string";
   if (type.kind === "Model" && (type as Model).name) return `*${(type as Model).name}`;
   if (isUnionType(type)) return (type as any).name;
@@ -64,11 +64,11 @@ function writeExpr(type: Type, varExpr: string): string {
   if (n === "float64" || n === "float" || n === "decimal") return `w.WriteFloat64(${varExpr})`;
   if (n === "bytes") return `w.WriteBytes(${varExpr})`;
   if (isArrayType(type)) {
-    const elem = arrayElementType(type);
+    const elem = arrayElementType(type)!;
     return `func() { w.BeginArray(len(${varExpr})); for _, item := range ${varExpr} { w.NextElement(); ${writeExpr(elem, "item")}; }; w.EndArray() }()`;
   }
   if (isRecordType(type)) {
-    const elem = recordElementType(type);
+    const elem = recordElementType(type)!;
     return `func() { w.BeginObject(len(${varExpr})); for key, val := range ${varExpr} { w.WriteField(key); ${writeExpr(elem, "val")}; }; w.EndObject() }()`;
   }
   if (type.kind === "Enum") return `w.WriteString(${varExpr})`;
@@ -102,13 +102,13 @@ function readExpr(type: Type, optional?: boolean): string {
   if (n === "float64" || n === "float" || n === "decimal") return `r.ReadFloat64()`;
   if (n === "bytes") return `r.ReadBytes()`;
   if (isArrayType(type)) {
-    const elem = arrayElementType(type);
+    const elem = arrayElementType(type)!;
     const elemGo = typeToGo(elem);
     const elemRead = readExpr(elem);
     return `func() []${elemGo} { var arr []${elemGo}; r.BeginArray(); for r.HasNextElement() { arr = append(arr, ${elemRead}) }; r.EndArray(); return arr }()`;
   }
   if (isRecordType(type)) {
-    const elem = recordElementType(type);
+    const elem = recordElementType(type)!;
     const elemGo = typeToGo(elem);
     const elemRead = readExpr(elem);
     return `func() map[string]${elemGo} { mapResult := map[string]${elemGo}{}; r.BeginObject(); for r.HasNextField() { key := r.ReadFieldName(); mapResult[key] = ${elemRead} }; r.EndObject(); return mapResult }()`;
@@ -280,8 +280,8 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
           xrefPkgs.add(dottedPathToSnakeCase(ns));
         }
       }
-      if (isArrayType(t)) collectX(arrayElementType(t)!);
-      if (isRecordType(t)) collectX(recordElementType(t)!);
+      if (isArrayType(t)) collectX(arrayElementType(t)!!);
+      if (isRecordType(t)) collectX(recordElementType(t)!!);
     };
     for (const m of svc.models) {
       if (!m.name) continue;
