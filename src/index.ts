@@ -101,18 +101,6 @@ function readExpr(type: Type, optional?: boolean): string {
   if (n === "float32") return `r.ReadFloat32()`;
   if (n === "float64" || n === "float" || n === "decimal") return `r.ReadFloat64()`;
   if (n === "bytes") return `r.ReadBytes()`;
-  if (isArrayType(type)) {
-    const elem = arrayElementType(type)!;
-    const elemGo = typeToGo(elem);
-    const elemRead = readExpr(elem);
-    return `func() []${elemGo} { var arr []${elemGo}; r.BeginArray(); for r.HasNextElement() { arr = append(arr, ${elemRead}) }; r.EndArray(); return arr }()`;
-  }
-  if (isRecordType(type)) {
-    const elem = recordElementType(type)!;
-    const elemGo = typeToGo(elem);
-    const elemRead = readExpr(elem);
-    return `func() map[string]${elemGo} { mapResult := map[string]${elemGo}{}; r.BeginObject(); for r.HasNextField() { key := r.ReadFieldName(); mapResult[key] = ${elemRead} }; r.EndObject(); return mapResult }()`;
-  }
   if (type.kind === "Enum") return "r.ReadString()";
   if (isUnionType(type)) {
     const unionName = (type as any).name;
@@ -131,6 +119,48 @@ function readExpr(type: Type, optional?: boolean): string {
     return `${pfx}Decode${modelName}(r)`;
   }
   return `r.ReadString()`;
+}
+
+function generateFieldRead(type: Type, r: string, indent: string, counter: { value: number }): { tmpVar: string; lines: string[] } {
+  const tmpVar = `_tmp${counter.value++}`;
+  if (isArrayType(type)) {
+    const elem = arrayElementType(type)!;
+    const elemGo = typeToGo(elem);
+    const lines: string[] = [];
+    lines.push(`${indent}${tmpVar} := make([]${elemGo}, 0)`);
+    lines.push(`${indent}${r}.BeginArray()`);
+    lines.push(`${indent}for ${r}.HasNextElement() {`);
+    if (isArrayType(elem) || isRecordType(elem)) {
+      const inner = generateFieldRead(elem, r, indent + "\t", counter);
+      for (const l of inner.lines) lines.push(l);
+      lines.push(`${indent}\t${tmpVar} = append(${tmpVar}, ${inner.tmpVar})`);
+    } else {
+      lines.push(`${indent}\t${tmpVar} = append(${tmpVar}, ${readExpr(elem)})`);
+    }
+    lines.push(`${indent}}`);
+    lines.push(`${indent}${r}.EndArray()`);
+    return { tmpVar, lines };
+  }
+  if (isRecordType(type)) {
+    const elem = recordElementType(type)!;
+    const elemGo = typeToGo(elem);
+    const lines: string[] = [];
+    lines.push(`${indent}${tmpVar} := map[string]${elemGo}{}`);
+    lines.push(`${indent}${r}.BeginObject()`);
+    lines.push(`${indent}for ${r}.HasNextField() {`);
+    lines.push(`${indent}\tkey := ${r}.ReadFieldName()`);
+    if (isArrayType(elem) || isRecordType(elem)) {
+      const inner = generateFieldRead(elem, r, indent + "\t", counter);
+      for (const l of inner.lines) lines.push(l);
+      lines.push(`${indent}\t${tmpVar}[key] = ${inner.tmpVar}`);
+    } else {
+      lines.push(`${indent}\t${tmpVar}[key] = ${readExpr(elem)}`);
+    }
+    lines.push(`${indent}}`);
+    lines.push(`${indent}${r}.EndObject()`);
+    return { tmpVar, lines };
+  }
+  throw new Error("generateFieldRead called for non-array/record type");
 }
 
 function emitModelFunctions(m: Model, L: string[]): void {
@@ -168,18 +198,30 @@ function emitModelFunctions(m: Model, L: string[]): void {
   L.push(`	r.BeginObject()`);
   L.push(`	for r.HasNextField() {`);
   L.push(`		switch r.ReadFieldName() {`);
+  const _counter = { value: 0 };
   for (const f of fields) {
     const fGo = toPascalCase(f.name);
-    const fieldRead = readExpr(f.type, f.optional);
-    if (f.optional) {
-      const goType = typeToGo(f.type);
-      if (goType.startsWith("*")) {
-        L.push(`		case "${f.name}": obj.${fGo} = ${fieldRead}`);
+    if (isArrayType(f.type) || isRecordType(f.type)) {
+      const read = generateFieldRead(f.type, "r", "\t\t\t", _counter);
+      L.push(`\t\tcase "${f.name}":`);
+      for (const l of read.lines) L.push(l);
+      if (f.optional) {
+        L.push(`\t\t\tobj.${fGo} = &${read.tmpVar}`);
       } else {
-        L.push(`		case "${f.name}": val := ${fieldRead}; obj.${fGo} = &val`);
+        L.push(`\t\t\tobj.${fGo} = ${read.tmpVar}`);
       }
     } else {
-      L.push(`		case "${f.name}": obj.${fGo} = ${fieldRead}`);
+      const fieldRead = readExpr(f.type, f.optional);
+      if (f.optional) {
+        const goType = typeToGo(f.type);
+        if (goType.startsWith("*")) {
+          L.push(`\t\tcase "${f.name}": obj.${fGo} = ${fieldRead}`);
+        } else {
+          L.push(`\t\tcase "${f.name}": val := ${fieldRead}; obj.${fGo} = &val`);
+        }
+      } else {
+        L.push(`\t\tcase "${f.name}": obj.${fGo} = ${fieldRead}`);
+      }
     }
   }
   L.push(`		default: r.Skip()`);
