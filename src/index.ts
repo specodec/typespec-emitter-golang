@@ -121,46 +121,99 @@ function readExpr(type: Type, optional?: boolean): string {
   return `r.ReadString()`;
 }
 
-function generateFieldRead(type: Type, r: string, indent: string, counter: { value: number }): { tmpVar: string; lines: string[] } {
-  const tmpVar = `_tmp`;
+function generateFieldRead(f: { name: string; type: Type; optional: boolean }, r: string, indent: string, skipIndent: string, counter: { value: number }): { stmts: string[]; value: string } {
+  const type = f.type;
+  const optional = f.optional;
+  const tmpVar = `tmp${counter.value++}`;
   if (isArrayType(type)) {
     const elem = arrayElementType(type)!;
     const elemGo = typeToGo(elem);
-    const lines: string[] = [];
-    lines.push(`${indent}${tmpVar} := make([]${elemGo}, 0)`);
-    lines.push(`${indent}${r}.BeginArray()`);
-    lines.push(`${indent}for ${r}.HasNextElement() {`);
-    if (isArrayType(elem) || isRecordType(elem)) {
-      const inner = generateFieldRead(elem, r, indent + "\t", counter);
-      for (const l of inner.lines) lines.push(l);
-      lines.push(`${indent}\t${tmpVar} = append(${tmpVar}, ${inner.tmpVar})`);
+    const stmts: string[] = [];
+    if (optional) {
+      stmts.push(`${indent}var ${tmpVar} []${elemGo}`);
+      stmts.push(`${indent}if ${r}.IsNull() {`);
+      stmts.push(`${indent}\t${r}.ReadNull()`);
+      stmts.push(`${indent}} else {`);
+      const ri = indent + "\t";
+      stmts.push(`${ri}${r}.BeginArray()`);
+      stmts.push(`${ri}for ${r}.HasNextElement() {`);
+      if (isArrayType(elem) || isRecordType(elem)) {
+        const inner = generateFieldRead({ name: "", type: elem, optional: false }, r, ri + "\t", "", counter);
+        for (const l of inner.stmts) stmts.push(l);
+        stmts.push(`${ri}\t${tmpVar} = append(${tmpVar}, ${inner.value})`);
+      } else {
+        stmts.push(`${ri}\t${tmpVar} = append(${tmpVar}, ${readExpr(elem)})`);
+      }
+      stmts.push(`${ri}}`);
+      stmts.push(`${ri}${r}.EndArray()`);
+      stmts.push(`${indent}}`);
     } else {
-      lines.push(`${indent}\t${tmpVar} = append(${tmpVar}, ${readExpr(elem)})`);
+      stmts.push(`${indent}${tmpVar} := make([]${elemGo}, 0)`);
+      stmts.push(`${indent}${r}.BeginArray()`);
+      stmts.push(`${indent}for ${r}.HasNextElement() {`);
+      if (isArrayType(elem) || isRecordType(elem)) {
+        const inner = generateFieldRead({ name: "", type: elem, optional: false }, r, indent + "\t", "", counter);
+        for (const l of inner.stmts) stmts.push(l);
+        stmts.push(`${indent}\t${tmpVar} = append(${tmpVar}, ${inner.value})`);
+      } else {
+        stmts.push(`${indent}\t${tmpVar} = append(${tmpVar}, ${readExpr(elem)})`);
+      }
+      stmts.push(`${indent}}`);
+      stmts.push(`${indent}${r}.EndArray()`);
     }
-    lines.push(`${indent}}`);
-    lines.push(`${indent}${r}.EndArray()`);
-    return { tmpVar, lines };
+    return { stmts, value: tmpVar };
   }
   if (isRecordType(type)) {
     const elem = recordElementType(type)!;
     const elemGo = typeToGo(elem);
-    const lines: string[] = [];
-    lines.push(`${indent}${tmpVar} := map[string]${elemGo}{}`);
-    lines.push(`${indent}${r}.BeginObject()`);
-    lines.push(`${indent}for ${r}.HasNextField() {`);
-    lines.push(`${indent}\tkey := ${r}.ReadFieldName()`);
-    if (isArrayType(elem) || isRecordType(elem)) {
-      const inner = generateFieldRead(elem, r, indent + "\t", counter);
-      for (const l of inner.lines) lines.push(l);
-      lines.push(`${indent}\t${tmpVar}[key] = ${inner.tmpVar}`);
+    const stmts: string[] = [];
+    if (optional) {
+      stmts.push(`${indent}var ${tmpVar} map[string]${elemGo}`);
+      stmts.push(`${indent}if ${r}.IsNull() {`);
+      stmts.push(`${indent}\t${r}.ReadNull()`);
+      stmts.push(`${indent}} else {`);
+      const ri = indent + "\t";
+      stmts.push(`${ri}${r}.BeginObject()`);
+      stmts.push(`${ri}for ${r}.HasNextField() {`);
+      stmts.push(`${ri}\tkey := ${r}.ReadFieldName()`);
+      if (isArrayType(elem) || isRecordType(elem)) {
+        const inner = generateFieldRead({ name: "", type: elem, optional: false }, r, ri + "\t", "", counter);
+        for (const l of inner.stmts) stmts.push(l);
+        stmts.push(`${ri}\t${tmpVar}[key] = ${inner.value}`);
+      } else {
+        stmts.push(`${ri}\t${tmpVar}[key] = ${readExpr(elem)}`);
+      }
+      stmts.push(`${ri}}`);
+      stmts.push(`${ri}${r}.EndObject()`);
+      stmts.push(`${indent}}`);
     } else {
-      lines.push(`${indent}\t${tmpVar}[key] = ${readExpr(elem)}`);
+      stmts.push(`${indent}${tmpVar} := map[string]${elemGo}{}`);
+      stmts.push(`${indent}${r}.BeginObject()`);
+      stmts.push(`${indent}for ${r}.HasNextField() {`);
+      stmts.push(`${indent}\tkey := ${r}.ReadFieldName()`);
+      if (isArrayType(elem) || isRecordType(elem)) {
+        const inner = generateFieldRead({ name: "", type: elem, optional: false }, r, indent + "\t", "", counter);
+        for (const l of inner.stmts) stmts.push(l);
+        stmts.push(`${indent}\t${tmpVar}[key] = ${inner.value}`);
+      } else {
+        stmts.push(`${indent}\t${tmpVar}[key] = ${readExpr(elem)}`);
+      }
+      stmts.push(`${indent}}`);
+      stmts.push(`${indent}${r}.EndObject()`);
     }
-    lines.push(`${indent}}`);
-    lines.push(`${indent}${r}.EndObject()`);
-    return { tmpVar, lines };
+    return { stmts, value: tmpVar };
   }
-  throw new Error("generateFieldRead called for non-array/record type");
+  if (optional && ((type.kind === "Model" && (type as Model).name) || isUnionType(type))) {
+    const stmts: string[] = [];
+    stmts.push(`${indent}var ${tmpVar} ${typeToGo(type)}`);
+    stmts.push(`${indent}if ${r}.IsNull() {`);
+    stmts.push(`${indent}\t${r}.ReadNull()`);
+    stmts.push(`${indent}} else {`);
+    stmts.push(`${indent}\t${tmpVar} = ${readExpr(type)}`);
+    stmts.push(`${indent}}`);
+    return { stmts, value: tmpVar };
+  }
+  return { stmts: [], value: readExpr(type) };
 }
 
 function emitModelFunctions(m: Model, L: string[]): void {
@@ -201,26 +254,30 @@ function emitModelFunctions(m: Model, L: string[]): void {
   const _counter = { value: 0 };
   for (const f of fields) {
     const fGo = toPascalCase(f.name);
-    if (isArrayType(f.type) || isRecordType(f.type)) {
-      const read = generateFieldRead(f.type, "r", "\t\t\t", _counter);
+    const read = generateFieldRead(f, "r", "\t\t\t", "", _counter);
+    if (read.stmts.length > 0) {
       L.push(`\t\tcase "${f.name}":`);
-      for (const l of read.lines) L.push(l);
-      if (f.optional) {
-        L.push(`\t\t\tobj.${fGo} = &${read.tmpVar}`);
-      } else {
-        L.push(`\t\t\tobj.${fGo} = ${read.tmpVar}`);
-      }
-    } else {
-      const fieldRead = readExpr(f.type, f.optional);
+      for (const l of read.stmts) L.push(l);
       if (f.optional) {
         const goType = typeToGo(f.type);
         if (goType.startsWith("*")) {
-          L.push(`\t\tcase "${f.name}": obj.${fGo} = ${fieldRead}`);
+          L.push(`\t\t\tobj.${fGo} = ${read.value}`);
         } else {
-          L.push(`\t\tcase "${f.name}": val := ${fieldRead}; obj.${fGo} = &val`);
+          L.push(`\t\t\tobj.${fGo} = &${read.value}`);
         }
       } else {
-        L.push(`\t\tcase "${f.name}": obj.${fGo} = ${fieldRead}`);
+        L.push(`\t\t\tobj.${fGo} = ${read.value}`);
+      }
+    } else {
+      if (f.optional) {
+        const goType = typeToGo(f.type);
+        if (goType.startsWith("*")) {
+          L.push(`\t\tcase "${f.name}": obj.${fGo} = ${read.value}`);
+        } else {
+          L.push(`\t\tcase "${f.name}": val := ${read.value}; obj.${fGo} = &val`);
+        }
+      } else {
+        L.push(`\t\tcase "${f.name}": obj.${fGo} = ${read.value}`);
       }
     }
   }
