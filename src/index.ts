@@ -122,7 +122,7 @@ function readExpr(type: Type, optional?: boolean): string {
 }
 
 function generateFieldRead(type: Type, r: string, indent: string, counter: { value: number }): { tmpVar: string; lines: string[] } {
-  const tmpVar = `_tmp${counter.value++}`;
+  const tmpVar = `_tmp`;
   if (isArrayType(type)) {
     const elem = arrayElementType(type)!;
     const elemGo = typeToGo(elem);
