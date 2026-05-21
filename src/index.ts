@@ -216,78 +216,80 @@ function generateFieldRead(f: { name: string; type: Type; optional: boolean }, r
   return { stmts: [], value: readExpr(type) };
 }
 
-function emitModelFunctions(m: Model, L: string[]): void {
+function generateModelCode(m: Model): string {
   if (!m.name) return;
+  const lines: string[] = [];
   const fields = extractFields(m);
   const required = fields.filter((f) => !f.optional);
   const optional = fields.filter((f) => f.optional);
 
-  L.push(`func Write${m.name}(w specodec.SpecWriter, obj *${m.name}) {`);
+  lines.push(`func Write${m.name}(w specodec.SpecWriter, obj *${m.name}) {`);
   if (optional.length === 0) {
-    L.push(`	w.BeginObject(${fields.length})`);
+    lines.push(`	w.BeginObject(${fields.length})`);
   } else {
-    L.push(`	fieldCount := ${required.length}`);
+    lines.push(`	fieldCount := ${required.length}`);
     for (const f of optional) {
-      const fGo = toPascalCase(f.name); L.push(`	if obj.${fGo} != nil { fieldCount++ }`);
+      const fGo = toPascalCase(f.name); lines.push(`	if obj.${fGo} != nil { fieldCount++ }`);
     }
-    L.push(`	w.BeginObject(fieldCount)`);
+    lines.push(`	w.BeginObject(fieldCount)`);
   }
   for (const f of fields) {
       const fGo = safeFieldName("go", toPascalCase(f.name));
       if (f.optional) {
         const goType = typeToGo(f.type);
         const deref = goType.startsWith("*") ? `obj.${fGo}` : `*obj.${fGo}`;
-        L.push(`	if obj.${fGo} != nil { w.WriteField("${f.name}"); ${writeExpr(f.type, deref)}; }`);
+        lines.push(`	if obj.${fGo} != nil { w.WriteField("${f.name}"); ${writeExpr(f.type, deref)}; }`);
     } else {
-      L.push(`	w.WriteField("${f.name}"); ${writeExpr(f.type, `obj.${fGo}`)};`);
+      lines.push(`	w.WriteField("${f.name}"); ${writeExpr(f.type, `obj.${fGo}`)};`);
     }
   }
-  L.push(`	w.EndObject()`);
-  L.push(`}`);
-  L.push("");
+  lines.push(`	w.EndObject()`);
+  lines.push(`}`);
+  lines.push("");
 
-  L.push(`func Decode${m.name}(r specodec.SpecReader) *${m.name} {`);
-  L.push(`	obj := &${m.name}{}`);
-  L.push(`	r.BeginObject()`);
-  L.push(`	for r.HasNextField() {`);
-  L.push(`		switch r.ReadFieldName() {`);
+  lines.push(`func Decode${m.name}(r specodec.SpecReader) *${m.name} {`);
+  lines.push(`	obj := &${m.name}{}`);
+  lines.push(`	r.BeginObject()`);
+  lines.push(`	for r.HasNextField() {`);
+  lines.push(`		switch r.ReadFieldName() {`);
   const _counter = { value: 0 };
   for (const f of fields) {
     const fGo = toPascalCase(f.name);
     const read = generateFieldRead(f, "r", "\t\t\t", "", _counter);
     if (read.stmts.length > 0) {
-      L.push(`\t\tcase "${f.name}":`);
-      for (const l of read.stmts) L.push(l);
+      lines.push(`\t\tcase "${f.name}":`);
+      for (const l of read.stmts) lines.push(l);
       if (f.optional) {
         const goType = typeToGo(f.type);
         if (goType.startsWith("*")) {
-          L.push(`\t\t\tobj.${fGo} = ${read.value}`);
+          lines.push(`\t\t\tobj.${fGo} = ${read.value}`);
         } else {
-          L.push(`\t\t\tobj.${fGo} = &${read.value}`);
+          lines.push(`\t\t\tobj.${fGo} = &${read.value}`);
         }
       } else {
-        L.push(`\t\t\tobj.${fGo} = ${read.value}`);
+        lines.push(`\t\t\tobj.${fGo} = ${read.value}`);
       }
     } else {
       if (f.optional) {
         const goType = typeToGo(f.type);
         if (goType.startsWith("*")) {
-          L.push(`\t\tcase "${f.name}": obj.${fGo} = ${read.value}`);
+          lines.push(`\t\tcase "${f.name}": obj.${fGo} = ${read.value}`);
         } else {
-          L.push(`\t\tcase "${f.name}": val := ${read.value}; obj.${fGo} = &val`);
+          lines.push(`\t\tcase "${f.name}": val := ${read.value}; obj.${fGo} = &val`);
         }
       } else {
-        L.push(`\t\tcase "${f.name}": obj.${fGo} = ${read.value}`);
+        lines.push(`\t\tcase "${f.name}": obj.${fGo} = ${read.value}`);
       }
     }
   }
-  L.push(`		default: r.Skip()`);
-  L.push(`		}`);
-  L.push(`	}`);
-  L.push(`	r.EndObject()`);
-  L.push(`	return obj`);
-  L.push(`}`);
-  L.push("");
+  lines.push(`		default: r.Skip()`);
+  lines.push(`		}`);
+  lines.push(`	}`);
+  lines.push(`	r.EndObject()`);
+  lines.push(`	return obj`);
+  lines.push(`}`);
+  lines.push("");
+  return lines.join("\n");
 }
 
 function generateUnionCode(u: UnionInfo, L: string[]): void {
@@ -433,7 +435,7 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
       L.push("");
     }
 
-    for (const m of svc.models) emitModelFunctions(m, L);
+    for (const m of svc.models) L.push(generateModelCode(m));
 
     for (const u of svc.unions) { generateUnionCode(u, L); }
 
